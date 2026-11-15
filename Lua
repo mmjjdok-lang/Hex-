@@ -6,7 +6,9 @@ local UIS=game:GetService("UserInputService")
 local TS=game:GetService("TweenService")
 local RS=game:GetService("RunService")
 local SS=game:GetService("SoundService")
+local CP=game:GetService("ContentProvider")
 local TextService=game:GetService("TextService")
+local HttpService=game:GetService("HttpService")
 local LP=Players.LocalPlayer
 
 local HE={}
@@ -23,7 +25,7 @@ local SUB=Color3.fromRGB(150,150,162)
 local WHITE=Color3.new(1,1,1)
 local LEFT,CENTER,RIGHT=Enum.TextXAlignment.Left,Enum.TextXAlignment.Center,Enum.TextXAlignment.Right
 local GB,G=Enum.Font.GothamBold,Enum.Font.Gotham
-local ICONS_URL="https://raw.githubusercontent.com/Footagesus/Icons/refs/heads/main/gravity/dist/Icons.lua"
+local ICONS_URLS={"https://raw.githubusercontent.com/Footagesus/Icons/main/Main-v2.lua","https://raw.githubusercontent.com/Footagesus/Icons/refs/heads/main/gravity/dist/Icons.lua"}
 
 ----------------------------------------------------------------- helpers
 local function new(c,p)
@@ -72,32 +74,47 @@ local function interactive(btn,host)
 	end)
 end
 
--- icons (asset id, rbxassetid, or name from the Icons library)
+-- moving light-black gradient on a text label
+local function movingGrad(lbl,conns,speed)
+	local g=new("UIGradient",{Color=ColorSequence.new({
+		ColorSequenceKeypoint.new(0,Color3.fromRGB(255,255,255)),
+		ColorSequenceKeypoint.new(.5,Color3.fromRGB(80,80,90)),
+		ColorSequenceKeypoint.new(1,Color3.fromRGB(255,255,255))}),Parent=lbl})
+	local t0=tick()
+	table.insert(conns,RS.Heartbeat:Connect(function()
+		g.Offset=Vector2.new(((tick()-t0)*(speed or .35)%2)-1,0)
+	end))
+	return g
+end
+
+----------------------------------------------------------------- icons
+-- Uses the original Footagesus Icons library:
+--   IconsV2.SetIconsType("lucide") ; IconsV2.GetIcon("house") ; "sfsymbols:HouseFill"
+-- Loaded in the background the moment the script runs (fast). Icons asked for before
+-- it finishes are queued and filled in automatically, then preloaded.
 local IconsLib
+local IconsReady=false
+local pending={}
 local warnedKeys=false
-local function loadIcons()
-	local body
-	local ok,r=pcall(function() return game:HttpGet(ICONS_URL) end)
-	if ok and type(r)=="string" and #r>20 then body=r end
-	if not body then
-		local req=(syn and syn.request) or (http and http.request) or http_request or request
-		if req then
-			local ok2,res=pcall(req,{Url=ICONS_URL,Method="GET"})
-			if ok2 and res and type(res.Body)=="string" and #res.Body>20 then body=res.Body end
-		end
+
+local function fetch(url)
+	local ok,r=pcall(function() return game:HttpGetAsync(url) end)
+	if ok and type(r)=="string" and #r>20 then return r end
+	ok,r=pcall(function() return game:HttpGet(url) end)
+	if ok and type(r)=="string" and #r>20 then return r end
+	local req=(syn and syn.request) or (http and http.request) or http_request or request
+	if req then
+		local ok2,res=pcall(req,{Url=url,Method="GET"})
+		if ok2 and res and type(res.Body)=="string" and #res.Body>20 then return res.Body end
 	end
-	if not body then warn("[HE] could not download Icons.lua (HttpGet blocked?)") return end
-	local f,err=loadstring(body)
-	if not f then warn("[HE] Icons.lua compile error: "..tostring(err)) return end
-	local ok3,lib=pcall(f)
-	if not ok3 then warn("[HE] Icons.lua run error: "..tostring(lib)) return end
-	if type(lib)=="function" then local ok4,l=pcall(lib) if ok4 then lib=l end end
-	IconsLib=lib
 end
 local function assetUrl(v)
 	v=tostring(v)
 	if tonumber(v) then return "rbxassetid://"..v end
 	return v
+end
+local function preload(img)
+	task.spawn(function() pcall(function() CP:PreloadAsync({img}) end) end)
 end
 local function applyResult(img,r)
 	if type(r)=="string" then img.Image=assetUrl(r) return true end
@@ -114,40 +131,64 @@ local function applyResult(img,r)
 	end
 	return false
 end
-local function lookup(name)
-	if type(IconsLib)~="table" then return nil end
-	local names={name,name:lower(),name:lower():gsub("_","-"),name:lower():gsub("%s+","-")}
-	local fns={}
-	for _,k in ipairs({"Icon","GetIcon","Get"}) do if type(IconsLib[k])=="function" then fns[#fns+1]=IconsLib[k] end end
-	for _,n in ipairs(names) do
-		for _,fn in ipairs(fns) do
-			for _,args in ipairs({{n},{n,"gravity"},{n,"lucide"},{IconsLib,n},{IconsLib,n,"gravity"}}) do
-				local ok,r=pcall(fn,table.unpack(args))
-				if ok and r then return r end
+local function resolve(img,icon)
+	if type(IconsLib)~="table" then return false end
+	local nm=tostring(icon)
+	local low=nm:lower()
+	local tries={nm,low,(low:gsub("[_%s]+","-"))}
+	for _,n in ipairs(tries) do
+		for _,k in ipairs({"GetIcon","Icon"}) do
+			local fn=IconsLib[k]
+			if type(fn)=="function" then
+				local ok,r=pcall(fn,n)
+				if ok and r and applyResult(img,r) then return true end
 			end
-		end
-		for _,k in ipairs({"Icons","icons","Gravity","gravity","Data"}) do
-			if type(IconsLib[k])=="table" and IconsLib[k][n] then return IconsLib[k][n] end
-		end
-		if IconsLib[n] and type(IconsLib[n])~="function" then return IconsLib[n] end
-	end
-	return nil
-end
-local function setIcon(img,icon)
-	if not icon or icon=="" then return false end
-	if tonumber(icon) or tostring(icon):find("rbx") or tostring(icon):find("http") then img.Image=assetUrl(icon) return true end
-	local r=lookup(tostring(icon))
-	if r and applyResult(img,r) then return true end
-	if not warnedKeys then
-		warnedKeys=true
-		if IconsLib==nil then warn("[HE] icon library not loaded, use asset ids instead")
-		else
-			local ks={}
-			for k in pairs(type(IconsLib)=="table" and IconsLib or {}) do if #ks<25 then ks[#ks+1]=tostring(k) end end
-			warn("[HE] icon '"..tostring(icon).."' not found. Library keys: "..table.concat(ks,", "))
 		end
 	end
 	return false
+end
+local function warnIcon(icon)
+	if warnedKeys then return end
+	warnedKeys=true
+	warn("[HE] icon '"..tostring(icon).."' not found in the Icons library (use names like \"house\", \"sword\", \"user\" or \"sfsymbols:HouseFill\")")
+end
+local function loadIcons()
+	for _,url in ipairs(ICONS_URLS) do
+		local body=fetch(url)
+		local f=body and loadstring(body)
+		if f then
+			local ok,lib=pcall(f)
+			if ok and lib then
+				if type(lib)=="function" then local ok2,l=pcall(lib) if ok2 then lib=l end end
+				if type(lib)=="table" then
+					pcall(function() if lib.SetIconsType then lib.SetIconsType("lucide") end end)
+					IconsLib=lib break
+				end
+			end
+		end
+	end
+	if not IconsLib then warn("[HE] could not load the Icons library (use asset ids instead)") end
+	IconsReady=true
+	for _,p in ipairs(pending) do
+		local img,name=p[1],p[2]
+		if img.Parent then
+			if resolve(img,name) then preload(img) else img.Visible=false warnIcon(name) end
+		end
+	end
+	pending={}
+end
+task.spawn(loadIcons)
+
+local function setIcon(img,icon)
+	if not icon or icon=="" then return false end
+	local s=tostring(icon)
+	if tonumber(s) or s:find("rbx") or s:find("http") then img.Image=assetUrl(s) preload(img) return true end
+	if IconsReady then
+		if resolve(img,s) then preload(img) return true end
+		warnIcon(s) return false
+	end
+	pending[#pending+1]={img,s}
+	return true
 end
 
 local function guiParent()
@@ -159,14 +200,14 @@ local function guiParent()
 end
 
 -- heavy single-finger drag: only the finger that touched the handle moves it
-local function makeDraggable(handle,target,canDrag,conns)
+local function makeDraggable(handle,target,canDrag,conns,onEnd)
 	local drag,startPos,startUD,goal
 	handle.InputBegan:Connect(function(i)
 		if drag or not isPress(i) then return end
 		if canDrag and not canDrag() then return end
 		drag=i startPos=i.Position startUD=target.Position goal=target.Position
 		i.Changed:Connect(function()
-			if i.UserInputState==Enum.UserInputState.End and drag==i then drag=nil end
+			if i.UserInputState==Enum.UserInputState.End and drag==i then drag=nil if onEnd then onEnd(goal) end end
 		end)
 	end)
 	table.insert(conns,UIS.InputChanged:Connect(function(i)
@@ -212,8 +253,22 @@ local function newScroll(parent)
 	return s
 end
 
-local function makePage(scroll,holder,win)
-	return setmetatable({Scroll=scroll,Holder=holder,Win=win,Extra={},n=0},Page)
+local function makePage(scroll,holder,win,key)
+	return setmetatable({Scroll=scroll,Holder=holder,Win=win,Extra={},n=0,Key=key},Page)
+end
+
+-- cards pop in one after another
+local function playIn(p)
+	if not (p and p.Scroll and p.Scroll.Parent) then return end
+	local i=0
+	for _,c in ipairs(p.Scroll:GetChildren()) do
+		local sc=c:FindFirstChild("CS")
+		if sc then
+			i=i+1
+			sc.Scale=.85
+			task.delay(math.min(i,12)*.035,function() tw(sc,.45,{Scale=1},Enum.EasingStyle.Back) end)
+		end
+	end
 end
 
 ----------------------------------------------------------------- page elements
@@ -224,15 +279,17 @@ function Page:_card(h)
 	corner(c,8)
 	CardStroke[c]=stroke(c,LINE,1,0)
 	new("UIGradient",{Color=ColorSequence.new(Color3.fromRGB(30,30,36),Color3.fromRGB(15,15,19)),Rotation=90,Parent=c})
+	new("UIScale",{Name="CS",Parent=c})
 	return c
 end
-local function head(c,name,desc)
+local function head(c,name,desc,off)
+	off=off or 12
 	local n=txt(c,name,13,GB)
-	n.Position=UDim2.new(0,12,0,desc and 7 or 0) n.Size=UDim2.new(1,-100,0,desc and 18 or 38)
+	n.Position=UDim2.new(0,off,0,desc and 7 or 0) n.Size=UDim2.new(1,-off-88,0,desc and 18 or 38)
 	n.TextTruncate=Enum.TextTruncate.AtEnd
 	if desc then
 		local d=txt(c,desc,11,G,SUB)
-		d.Position=UDim2.new(0,12,0,25) d.Size=UDim2.new(1,-100,0,14) d.TextTruncate=Enum.TextTruncate.AtEnd
+		d.Position=UDim2.new(0,off,0,25) d.Size=UDim2.new(1,-off-88,0,14) d.TextTruncate=Enum.TextTruncate.AtEnd
 	end
 end
 local function overlay(c,size)
@@ -255,37 +312,61 @@ function Page:Spacer()
 	new("Frame",{Position=UDim2.new(0,4,.5,0),Size=UDim2.new(1,-8,0,1),BackgroundColor3=LINE,BorderSizePixel=0,Parent=f})
 end
 
+function Page:_key(name) if self.Key then return self.Key.."/"..tostring(name) end end
+function Page:_saved(key) if key then return self.Win.Data.v[key] end end
+function Page:_store(key,val) if key then self.Win.Data.v[key]=val self.Win:Save() end end
+
 function Page:Button(o)
 	local c=self:_card(o.Desc and 46 or 38)
-	head(c,o.Name or "Button",o.Desc)
-	local a=txt(c,">",16,GB,SUB,CENTER) a.AnchorPoint=Vector2.new(1,.5) a.Position=UDim2.new(1,-8,.5,0) a.Size=UDim2.fromOffset(20,20)
+	local fl=not self.NoFloat
+	head(c,o.Name or "Button",o.Desc,fl and 34 or 12)
 	local b=overlay(c)
 	b.Activated:Connect(function() safe(o.Callback) end)
 	b.MouseEnter:Connect(function() tw(CardStroke[c],.2,{Color=self.Win.Accent}) end)
 	b.MouseLeave:Connect(function() tw(CardStroke[c],.2,{Color=LINE}) end)
+	if fl then self:_attachFloating(c,o,"Button",nil,function() safe(o.Callback) end) end
 	return c
 end
 
 function Page:Toggle(o)
 	local c=self:_card(o.Desc and 46 or 38)
-	head(c,o.Name or "Toggle",o.Desc)
+	local fl=not self.NoFloat
+	head(c,o.Name or "Toggle",o.Desc,fl and 34 or 12)
 	local off=Color3.fromRGB(45,45,52)
 	local track=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-12,.5,0),Size=UDim2.fromOffset(38,20),BackgroundColor3=off,Parent=c})
 	corner(track,10)
 	local knob=new("Frame",{Size=UDim2.fromOffset(14,14),Position=UDim2.new(0,3,.5,-7),BackgroundColor3=WHITE,Parent=track})
 	corner(knob,7)
+	local key=self:_key(o.Name)
+	local saved=self:_saved(key)
 	local state=false
+	local listeners={}
 	local function set(v,silent)
 		state=v
 		tw(track,.25,{BackgroundColor3=v and self.Win.Accent or off})
 		tw(knob,.25,{BackgroundColor3=v and onAcc(self.Win.Accent) or WHITE})
 		tw(knob,.25,{Position=v and UDim2.new(1,-17,.5,-7) or UDim2.new(0,3,.5,-7)},Enum.EasingStyle.Back)
-		if not silent then safe(o.Callback,v) end
+		for _,f in ipairs(listeners) do f(v) end
+		if not silent then self:_store(key,v) safe(o.Callback,v) end
 	end
-	set(o.Default and true or false,true)
+	set(saved~=nil and saved or (o.Default and true or false),true)
+	if saved~=nil then task.defer(function() safe(o.Callback,state) end) end
 	local b=overlay(c)
 	b.Activated:Connect(function() set(not state) end)
-	return {Set=function(_,v) set(v) end,Get=function() return state end}
+	b.MouseEnter:Connect(function() tw(CardStroke[c],.2,{Color=self.Win.Accent}) end)
+	b.MouseLeave:Connect(function() tw(CardStroke[c],.2,{Color=LINE}) end)
+	local ctl={Set=function(_,v) set(v) end,Get=function() return state end,Toggle=function() set(not state) end,Listen=function(f) listeners[#listeners+1]=f end}
+	if fl then self:_attachFloating(c,o,"Toggle",ctl,function() set(not state) end) end
+	return ctl
+end
+
+function Page:TextBox(o)
+	local c=self:_card(38)
+	local n=txt(c,o.Name or "Text",13,GB) n.Position=UDim2.new(0,12,0,0) n.Size=UDim2.new(.5,-12,1,0)
+	local box=new("TextBox",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-10,.5,0),Size=UDim2.new(.45,0,0,26),BackgroundColor3=Color3.fromRGB(10,10,12),Text=o.Default or "",PlaceholderText=o.Placeholder or "",PlaceholderColor3=SUB,TextColor3=TXT,Font=G,TextSize=12,ClearTextOnFocus=false,Parent=c})
+	corner(box,6) stroke(box,LINE,1)
+	box.FocusLost:Connect(function() safe(o.Callback,box.Text) end)
+	return box
 end
 
 function Page:Slider(o)
@@ -300,6 +381,7 @@ function Page:Slider(o)
 	corner(knob,7)
 	local hit=new("Frame",{Position=UDim2.new(0,0,.5,-12),Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,Parent=track})
 	local value
+	local key=self:_key(o.Name) local saved=self:_saved(key)
 	local function set(v,silent)
 		v=math.clamp(math.floor((v-min)/inc+.5)*inc+min,min,max)
 		if v==value then return end
@@ -307,9 +389,10 @@ function Page:Slider(o)
 		local a=(max-min)==0 and 0 or (v-min)/(max-min)
 		fill.Size=UDim2.new(a,0,1,0) knob.Position=UDim2.new(a,0,.5,0)
 		vl.Text=tostring(v)
-		if not silent then safe(o.Callback,v) end
+		if not silent then self:_store(key,v) safe(o.Callback,v) end
 	end
-	set(o.Default or min,true)
+	set(type(saved)=="number" and saved or (o.Default or min),true)
+	if type(saved)=="number" then task.defer(function() safe(o.Callback,value) end) end
 	dragArea(hit,function(x) set(min+(max-min)*x) end,self.Scroll)
 	return {Set=function(_,v) set(v) end,Get=function() return value end}
 end
@@ -320,6 +403,11 @@ function Page:Dropdown(o)
 	local multi=o.Multi
 	local sel,single={},o.Default
 	if multi and type(o.Default)=="table" then for _,v in ipairs(o.Default) do sel[v]=true end end
+	local key=self:_key(o.Name) local saved=self:_saved(key)
+	if saved~=nil then
+		if multi and type(saved)=="table" then sel={} for _,v in ipairs(saved) do sel[v]=true end
+		elseif not multi and type(saved)=="string" then single=saved end
+	end
 	local function nameOf(op) return type(op)=="table" and op.Name or tostring(op) end
 	local c=self:_card(38)
 	local nm=txt(c,o.Name or "Dropdown",13,GB) nm.Position=UDim2.new(0,12,0,0) nm.Size=UDim2.new(.5,-12,1,0)
@@ -337,6 +425,7 @@ function Page:Dropdown(o)
 		else val.Text=single and tostring(single) or "Select" end
 	end
 	refresh()
+	if saved~=nil then task.defer(function() safe(o.Callback,multi and list() or single) end) end
 	local closeFn
 	local function open()
 		local main=win.Main
@@ -351,10 +440,11 @@ function Page:Dropdown(o)
 		local f=new("Frame",{AnchorPoint=Vector2.new(0,above and 1 or 0),Position=UDim2.fromOffset(x,above and ap.Y-4 or ap.Y+c.AbsoluteSize.Y+4),Size=UDim2.fromOffset(W,0),BackgroundColor3=Color3.fromRGB(12,12,15),ClipsDescendants=true,ZIndex=41,Parent=main})
 		corner(f,8) stroke(f,win.Accent,1,.35)
 		tw(f,.28,{Size=UDim2.fromOffset(W,H)},Enum.EasingStyle.Back)
+		tw(ar,.25,{Rotation=180})
 		local box
 		if o.Search then
 			local row=new("Frame",{Position=UDim2.fromOffset(6,5),Size=UDim2.new(1,-12,0,26),BackgroundColor3=Color3.fromRGB(24,24,28),Parent=f}) corner(row,6)
-			new("ImageLabel",{BackgroundTransparency=1,Size=UDim2.fromOffset(16,16),Position=UDim2.fromOffset(7,5),Image="rbxassetid://74359225654527",Parent=row})
+			local si=new("ImageLabel",{BackgroundTransparency=1,Size=UDim2.fromOffset(16,16),Position=UDim2.fromOffset(7,5),Image="rbxassetid://74359225654527",Parent=row})
 			box=new("TextBox",{BackgroundTransparency=1,Position=UDim2.fromOffset(30,0),Size=UDim2.new(1,-34,1,0),Text="",PlaceholderText="Search...",PlaceholderColor3=SUB,TextColor3=TXT,Font=G,TextSize=12,TextXAlignment=LEFT,ClearTextOnFocus=false,Parent=row})
 		end
 		local lst=newScroll(f) lst.Visible=true lst.Position=UDim2.fromOffset(6,searchH+3) lst.Size=UDim2.new(1,-12,0,listH)
@@ -362,6 +452,7 @@ function Page:Dropdown(o)
 		local function close()
 			if not blocker.Parent then return end
 			blocker:Destroy() closeFn=nil
+			tw(ar,.2,{Rotation=0})
 			tw(f,.2,{Size=UDim2.fromOffset(W,0)})
 			task.delay(.22,function() f:Destroy() end)
 		end
@@ -385,10 +476,10 @@ function Page:Dropdown(o)
 						if multi then
 							sel[n]=not sel[n] or nil
 							refresh() build()
-							safe(o.Callback,list())
+							safe(o.Callback,list()) self:_store(key,list())
 						else
 							single=n refresh() close()
-							safe(o.Callback,n)
+							safe(o.Callback,n) self:_store(key,n)
 						end
 					end)
 				end
@@ -427,6 +518,8 @@ end
 function Page:ColorPicker(o)
 	local c=self:_card(38) c.ClipsDescendants=true
 	local col=o.Default or Color3.fromRGB(255,0,0)
+	local key=self:_key(o.Name) local sd=self:_saved(key)
+	if type(sd)=="table" and sd[3] then col=Color3.fromRGB(sd[1],sd[2],sd[3]) end
 	local h,s,v=Color3.toHSV(col)
 	local n=txt(c,o.Name or "Color",13,GB) n.Position=UDim2.new(0,12,0,0) n.Size=UDim2.new(1,-130,0,38)
 	local hx=txt(c,"",11,G,SUB,RIGHT) hx.Position=UDim2.new(1,-120,0,0) hx.Size=UDim2.fromOffset(76,38)
@@ -447,13 +540,14 @@ function Page:ColorPicker(o)
 		local cc=Color3.fromHSV(h,s,v)
 		sw.BackgroundColor3=cc sv.BackgroundColor3=Color3.fromHSV(h,1,1)
 		cur.Position=UDim2.new(s,0,1-v,0) hc.Position=UDim2.new(.5,0,h,0) hx.Text=hex(cc)
-		if not silent then safe(o.Callback,cc) end
+		if not silent then self:_store(key,{math.floor(cc.R*255+.5),math.floor(cc.G*255+.5),math.floor(cc.B*255+.5)}) safe(o.Callback,cc) end
 	end
 	apply(true)
+	if type(sd)=="table" and sd[3] then task.defer(function() safe(o.Callback,Color3.fromHSV(h,s,v)) end) end
 	dragArea(sv,function(x,y) s=x v=1-y apply() end,self.Scroll)
 	dragArea(hue,function(_,y) h=math.min(y,.999) apply() end,self.Scroll)
 	local op=false
-	hd.Activated:Connect(function() op=not op tw(c,.3,{Size=UDim2.new(1,0,0,op and 158 or 38)}) end)
+	hd.Activated:Connect(function() op=not op tw(c,.3,{Size=UDim2.new(1,0,0,op and 158 or 38)},Enum.EasingStyle.Back) end)
 end
 
 function Page:LabelBox(o)
@@ -498,12 +592,15 @@ function Page:ButtonSettings(o)
 			local t=txt(sp,(o.Name or "Button").." Settings",13,GB) t.Position=UDim2.fromOffset(70,0) t.Size=UDim2.new(1,-70,0,24)
 			local holder=new("Frame",{Position=UDim2.fromOffset(0,32),Size=UDim2.new(1,0,1,-32),BackgroundTransparency=1,Parent=sp})
 			local sc=newScroll(holder) sc.Visible=true
-			local pg=makePage(sc,self.Holder,self.Win)
+			local pg=makePage(sc,self.Holder,self.Win,self.Key and (self.Key.."/"..(o.Name or "").."/s") or nil)
 			safe(o.Settings,pg)
 			table.insert(self.Extra,sp)
-			back.Activated:Connect(function() sp.Visible=false self.Scroll.Visible=true end)
+			back.Activated:Connect(function() sp.Visible=false self.Scroll.Visible=true playIn(self) end)
 		end
 		self.Scroll.Visible=false sp.Visible=true
+		local p2
+		for _,ch in ipairs(sp:GetDescendants()) do if ch:IsA("ScrollingFrame") then p2={Scroll=ch} break end end
+		playIn(p2)
 	end)
 end
 
@@ -530,21 +627,63 @@ local function emitter(class,props)
 end
 local FXList={"Headless","Korblox","Rainbow","Fire","Purple Trails","Neon Glow","Ghost","Sparkles","Smoke","Invisible"}
 local FX={
+	-- Headless: hides head + face, removes hair / hats / face accessories
 	Headless={on=function(ch,st)
-		local h=ch:FindFirstChild("Head")
-		if h then st.o=h.Transparency h.Transparency=1 for _,d in ipairs(h:GetChildren()) do if d:IsA("Decal") then d.Transparency=1 end end end
+		st.dec,st.acc={},{}
+		local function apply()
+			local h=ch:FindFirstChild("Head")
+			if h then
+				if st.o==nil then st.o=h.Transparency end
+				h.Transparency=1
+				for _,d in ipairs(h:GetDescendants()) do
+					if d:IsA("Decal") or d:IsA("Texture") then
+						if st.dec[d]==nil then st.dec[d]=d.Transparency end
+						d.Transparency=1
+					end
+				end
+			end
+			for _,a in ipairs(ch:GetChildren()) do
+				if a:IsA("Accessory") and not st.acc[a] then
+					local hd=a:FindFirstChild("Handle")
+					local at=hd and hd:FindFirstChildWhichIsA("Attachment")
+					local nm=(at and at.Name or "")..tostring(a.AccessoryType)
+					if nm:find("Hair") or nm:find("Hat") or nm:find("Face") then
+						st.acc[a]=true
+						a.Parent=nil
+					end
+				end
+			end
+		end
+		apply()
+		st.c=ch.ChildAdded:Connect(function() task.defer(apply) end)
 	end,off=function(ch,st)
+		if st.c then st.c:Disconnect() end
 		local h=ch:FindFirstChild("Head")
-		if h then h.Transparency=st.o or 0 for _,d in ipairs(h:GetChildren()) do if d:IsA("Decal") then d.Transparency=0 end end end
+		if h then h.Transparency=st.o or 0 end
+		for d,v in pairs(st.dec or {}) do if d.Parent then d.Transparency=v end end
+		for a in pairs(st.acc or {}) do a.Parent=ch end
 	end},
+	-- Korblox: same as the standalone script (R15 right leg)
 	Korblox={on=function(ch,st)
-		local hum=ch:FindFirstChildOfClass("Humanoid")
-		local d=hum:GetAppliedDescription()
-		st.d=d:Clone() d.RightLeg=139607718
-		hum:ApplyDescription(d)
+		local foot=ch:WaitForChild("RightFoot",5)
+		local lower=ch:WaitForChild("RightLowerLeg",5)
+		local upper=ch:WaitForChild("RightUpperLeg",5)
+		if not (foot and lower and upper) then error("Korblox needs an R15 rig") end
+		st.o={}
+		for _,p in ipairs({foot,lower,upper}) do st.o[p]={p.MeshId,p.Transparency,p.TextureID} end
+
+		foot.MeshId="rbxassetid://902942089"
+		foot.Transparency=1
+
+		lower.MeshId="rbxassetid://902942093"
+		lower.Transparency=1
+
+		upper.MeshId="rbxassetid://902942096"
+		upper.TextureID="rbxassetid://902843398"
 	end,off=function(ch,st)
-		local hum=ch:FindFirstChildOfClass("Humanoid")
-		if st.d and hum then hum:ApplyDescription(st.d) end
+		for p,v in pairs(st.o or {}) do
+			pcall(function() p.MeshId=v[1] p.Transparency=v[2] p.TextureID=v[3] end)
+		end
 	end},
 	Rainbow={on=function(ch,st)
 		st.o={}
@@ -586,8 +725,167 @@ local FX={
 	Invisible={on=function(ch,st) setT(ch,st,1) end,off=function(ch,st) resetT(st) end},
 }
 
------------------------------------------------------------------ loading screen
-local function loading(gui,accent)
+----------------------------------------------------------------- floating buttons
+local SHAPES={}
+do
+	local function add(name,r,aw,ah,rot) SHAPES[#SHAPES+1]={Name=name,r=r,aw=aw or 1,ah=ah or 1,rot=rot or 0} end
+	for _,r in ipairs({0,2,3,4,6,8,10,12,14,16,18,20,24,28,999}) do add(r==0 and "Square" or (r==999 and "Circle" or ("Rounded "..r)),r) end
+	for _,r in ipairs({0,4,8,12,16,20,24,999}) do add("Wide "..(r==999 and "Pill" or ("R"..r)),r,1.6,1) end
+	for _,r in ipairs({0,8,16,999}) do add("Tall "..(r==999 and "Pill" or ("R"..r)),r,.7,1) end
+	add("Diamond",0,1,1,45) add("Soft Diamond",6,1,1,45) add("Long Pill",999,2.2,1)
+end
+local SHAPE_MAP,SHAPE_NAMES={},{}
+for _,sh in ipairs(SHAPES) do SHAPE_MAP[sh.Name]=sh SHAPE_NAMES[#SHAPE_NAMES+1]=sh.Name end
+
+local function parseSize(t)
+	t=tostring(t):lower():gsub("%s","")
+	local a,b=t:match("^(%d+%.?%d*)x(%d+%.?%d*)$")
+	if not a then a=t:match("^(%d+%.?%d*)$") b=a end
+	a,b=tonumber(a) or 30,tonumber(b) or 30
+	return math.clamp(a,16,200),math.clamp(b,16,200)
+end
+
+local function buildFB(win,cfg,run,ctl,parent,preview)
+	local b=new("TextButton",{AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=Color3.fromRGB(14,14,16),BorderSizePixel=0,Text="",AutoButtonColor=false,Parent=parent})
+	local cr=corner(b,8)
+	local st=new("UIStroke",{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=WHITE,Parent=b})
+	local gr=new("UIGradient",{Parent=st})
+	local lbl=new("TextLabel",{BackgroundTransparency=1,AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.new(1,-6,1,-6),Text="",Font=GB,TextColor3=WHITE,TextScaled=true,Parent=b})
+	new("UITextSizeConstraint",{MaxTextSize=14,MinTextSize=5,Parent=lbl})
+	local ps=new("UIScale",{Scale=0,Parent=b})
+	tw(ps,.5,{Scale=1},Enum.EasingStyle.Back)
+	local obj={}
+	local function style()
+		if not b.Parent then return end
+		local on=ctl and ctl.Get() or false
+		b.BackgroundColor3=on and win.Accent or Color3.fromRGB(14,14,16)
+		lbl.TextColor3=on and onAcc(win.Accent) or WHITE
+	end
+	function obj.Update()
+		local sh=SHAPE_MAP[cfg.Shape] or SHAPE_MAP["Rounded 8"]
+		local sx,sy=parseSize(cfg.SizeText)
+		b.Size=UDim2.fromOffset(sx*sh.aw,sy*sh.ah)
+		cr.CornerRadius=UDim.new(0,sh.r)
+		b.Rotation=sh.rot lbl.Rotation=-sh.rot
+		lbl.Text=(cfg.Name and cfg.Name~="") and cfg.Name or " "
+		st.Thickness=cfg.GSize
+		st.Transparency=1-math.clamp(cfg.GStrength,0,100)/100
+		local n,kp=#cfg.Colors,{}
+		for i,c in ipairs(cfg.Colors) do kp[i]=ColorSequenceKeypoint.new(n==1 and 0 or (i-1)/(n-1),Color3.fromRGB(c[1],c[2],c[3])) end
+		if n==1 then kp[2]=ColorSequenceKeypoint.new(1,kp[1].Value) end
+		gr.Color=ColorSequence.new(kp)
+		style()
+	end
+	local conn=RS.Heartbeat:Connect(function(dt) gr.Rotation=(gr.Rotation+cfg.GSpeed*dt)%360 end)
+	table.insert(win.Conns,conn)
+	if ctl and ctl.Listen then ctl.Listen(style) end
+	if preview then
+		b.Position=UDim2.fromScale(.5,.5)
+	else
+		b.Position=cfg.Pos and UDim2.new(cfg.Pos[1],cfg.Pos[2],cfg.Pos[3],cfg.Pos[4]) or UDim2.new(.5,0,.3,0)
+		interactive(b,b)
+		makeDraggable(b,b,function() return cfg.Draggable end,win.Conns,function(goal)
+			if goal then cfg.Pos={goal.X.Scale,goal.X.Offset,goal.Y.Scale,goal.Y.Offset} win:Save() end
+		end)
+		local start
+		b.InputBegan:Connect(function(i) if isPress(i) then start=b.AbsolutePosition tw(ps,.08,{Scale=.88}) end end)
+		b.InputEnded:Connect(function(i) if isPress(i) then tw(ps,.3,{Scale=1},Enum.EasingStyle.Back) end end)
+		b.Activated:Connect(function()
+			if start and (b.AbsolutePosition-start).Magnitude>8 then return end
+			safe(run)
+		end)
+	end
+	function obj.Destroy() conn:Disconnect() b:Destroy() end
+	return obj
+end
+
+function Page:_attachFloating(c,o,kind,ctl,run)
+	local win=self.Win
+	local key="fb/"..(self.Key and (self.Key.."/") or "")..tostring(o.Name or kind)
+	local cfg=win.Data.fb[key]
+	if type(cfg)~="table" then cfg={} win.Data.fb[key]=cfg end
+	local def={Name=o.Name or kind,SizeText="30x30",Shape="Rounded 8",Draggable=true,Colors={{14,14,16},{255,255,255},{14,14,16}},GSize=2,GSpeed=90,GStrength=100,Enabled=false}
+	for k,v in pairs(def) do if cfg[k]==nil then cfg[k]=v end end
+	for i=1,3 do cfg.Colors[i]=cfg.Colors[i] or def.Colors[i] end
+	local live,prev,ed,s1,s2
+	local function showLive()
+		if live then live.Update() else live=buildFB(win,cfg,run,ctl,win.Gui,false) live.Update() end
+	end
+	local function removeLive() if live then live.Destroy() live=nil end end
+	if cfg.Enabled then task.defer(showLive) end
+
+	local arrow=new("TextButton",{AnchorPoint=Vector2.new(0,.5),Position=UDim2.new(0,6,.5,0),Size=UDim2.fromOffset(22,22),BackgroundColor3=Color3.fromRGB(34,34,40),Text=">",TextColor3=TXT,Font=GB,TextSize=13,AutoButtonColor=false,ZIndex=6,Parent=c})
+	corner(arrow,6) interactive(arrow,c)
+	arrow.MouseEnter:Connect(function() tw(arrow,.15,{BackgroundColor3=Color3.fromRGB(52,52,60)}) end)
+	arrow.MouseLeave:Connect(function() tw(arrow,.15,{BackgroundColor3=Color3.fromRGB(34,34,40)}) end)
+
+	local function close()
+		ed.Visible=false s1.Visible=true s2.Visible=false self.Scroll.Visible=true playIn(self)
+	end
+	local function build()
+		ed=new("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false,Parent=self.Holder})
+		table.insert(self.Extra,ed)
+		local back=new("TextButton",{Size=UDim2.fromOffset(60,24),BackgroundColor3=Color3.fromRGB(26,26,31),Text="< Back",TextColor3=TXT,Font=GB,TextSize=12,AutoButtonColor=false,Parent=ed})
+		corner(back,6) interactive(back,back) back.Activated:Connect(close)
+		local t=txt(ed,tostring(o.Name or kind).." - Floating "..kind,13,GB) t.Position=UDim2.fromOffset(70,0) t.Size=UDim2.new(1,-70,0,24)
+		local sq=new("Frame",{Position=UDim2.fromOffset(0,32),Size=UDim2.fromOffset(150,150),BackgroundColor3=Color3.fromRGB(6,6,8),Parent=ed})
+		corner(sq,8) stroke(sq,LINE,1)
+		local pl=txt(sq,"Preview",10,G,SUB,CENTER) pl.Size=UDim2.new(1,0,0,16) pl.Position=UDim2.fromOffset(0,4)
+		prev=buildFB(win,cfg,run,ctl,sq,true) prev.Update()
+		local body=new("Frame",{Position=UDim2.fromOffset(158,32),Size=UDim2.new(1,-158,1,-32),BackgroundTransparency=1,Parent=ed})
+		s1,s2=newScroll(body),newScroll(body)
+		s1.Visible=true
+		local p1,p2=makePage(s1,self.Holder,win),makePage(s2,self.Holder,win)
+		p1.NoFloat=true p2.NoFloat=true
+		local function refresh() prev.Update() if live then live.Update() end win:Save() end
+		local function apply() cfg.Enabled=true showLive() win:Save() close() end
+		p1:Dropdown({Name="Button Shape",Options=SHAPE_NAMES,Default=cfg.Shape,Search=true,Callback=function(v) cfg.Shape=v refresh() end})
+		p1:TextBox({Name="Button Name",Default=cfg.Name,Placeholder="Name",Callback=function(v) cfg.Name=v refresh() end})
+		p1:TextBox({Name="Button Size",Default=cfg.SizeText,Placeholder="30x30",Callback=function(v) cfg.SizeText=v refresh() end})
+		p1:Toggle({Name="Draggable",Default=cfg.Draggable,Callback=function(v) cfg.Draggable=v win:Save() end})
+		p1:Button({Name="Edge Gradient",Desc="Colors, size, speed, strength",Callback=function() s1.Visible=false s2.Visible=true playIn(p2) end})
+		p1:Button({Name="Remove from screen",Callback=function() cfg.Enabled=false removeLive() win:Save() end})
+		p1:Split({Columns=2,Items={{Name="Back",Callback=close},{Name="Apply",Callback=apply}}})
+		for i=1,3 do
+			p2:ColorPicker({Name="Gradient Color "..i,Default=Color3.fromRGB(cfg.Colors[i][1],cfg.Colors[i][2],cfg.Colors[i][3]),Callback=function(c3)
+				cfg.Colors[i]={math.floor(c3.R*255+.5),math.floor(c3.G*255+.5),math.floor(c3.B*255+.5)} refresh()
+			end})
+		end
+		p2:Slider({Name="Gradient Size",Min=1,Max=6,Default=cfg.GSize,Callback=function(v) cfg.GSize=v refresh() end})
+		p2:Slider({Name="Gradient Speed",Min=0,Max=360,Increment=5,Default=cfg.GSpeed,Callback=function(v) cfg.GSpeed=v refresh() end})
+		p2:Slider({Name="Gradient Strength",Min=0,Max=100,Increment=5,Default=cfg.GStrength,Callback=function(v) cfg.GStrength=v refresh() end})
+		p2:Split({Columns=2,Items={{Name="Back",Callback=function() s2.Visible=false s1.Visible=true playIn(p1) end},{Name="Apply",Callback=apply}}})
+	end
+	arrow.Activated:Connect(function()
+		if not ed then build() end
+		s1.Visible=true s2.Visible=false
+		self.Scroll.Visible=false ed.Visible=true
+		playIn(s1 and {Scroll=s1})
+	end)
+end
+
+function Window:Save()
+	if self.saveBusy then return end
+	self.saveBusy=true
+	task.delay(.8,function()
+		self.saveBusy=false
+		pcall(function() if writefile then writefile(self.FileName,HttpService:JSONEncode(self.Data)) end end)
+	end)
+end
+
+function Window:_load()
+	self.Data={v={},fb={}}
+	pcall(function()
+		if isfile and readfile and isfile(self.FileName) then
+			local d=HttpService:JSONDecode(readfile(self.FileName))
+			if type(d)=="table" then self.Data.v=d.v or {} self.Data.fb=d.fb or {} end
+		end
+	end)
+end
+
+----------------------------------------------------------------- intro / loading screen
+-- w = {Enabled, Name, Time, Sticky}
+local function loading(gui,accent,w)
 	local f=new("CanvasGroup",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.new(1,999,1,999),BackgroundColor3=Color3.new(0,0,0),BorderSizePixel=0,ZIndex=500,Parent=gui})
 	local logo=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.new(.5,0,.5,-30),Size=UDim2.fromOffset(96,60),BackgroundTransparency=1,Parent=f})
 	local rects={{0,0,12,60},{36,0,12,60},{12,24,24,12},{48,0,12,60},{60,0,36,12},{60,24,26,12},{60,48,36,12}}
@@ -595,20 +893,43 @@ local function loading(gui,accent)
 		local p=new("Frame",{Position=UDim2.fromOffset(r[1],r[2]+14),Size=UDim2.fromOffset(r[3],r[4]),BackgroundColor3=WHITE,BackgroundTransparency=1,BorderSizePixel=0,Parent=logo})
 		task.delay(i*.07,function() tw(p,.4,{Position=UDim2.fromOffset(r[1],r[2]),BackgroundTransparency=0}) end)
 	end
+	local wt=txt(f,"Welcome, "..tostring(w.Name),18,GB,WHITE,CENTER)
+	wt.AnchorPoint=Vector2.new(.5,.5) wt.Position=UDim2.new(.5,0,.5,-92) wt.Size=UDim2.fromOffset(360,24) wt.TextTransparency=1
+	wt.TextTruncate=Enum.TextTruncate.AtEnd
+	tw(wt,.7,{TextTransparency=0})
+	local wconns={}
+	movingGrad(wt,wconns,.5)
+	table.insert(wconns,RS.Heartbeat:Connect(function() end))
 	local st=txt(f,"",12,GB,SUB,CENTER) st.AnchorPoint=Vector2.new(.5,.5) st.Position=UDim2.new(.5,0,.5,64) st.Size=UDim2.fromOffset(300,18)
 	local tr=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.new(.5,0,.5,86),Size=UDim2.fromOffset(220,4),BackgroundColor3=Color3.fromRGB(30,30,34),BorderSizePixel=0,Parent=f})
-	local fl=new("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=accent,BorderSizePixel=0,Parent=tr})
-	local function step(t,a,fn)
-		st.Text=t tw(fl,.4,{Size=UDim2.new(a,0,1,0)})
-		if fn then fn() end
-		task.wait(.45)
+	corner(tr,2)
+	local fl=new("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=accent,BorderSizePixel=0,Parent=tr}) corner(fl,2)
+	local steps={{"Initializing interface...",.2},{"Loading modules...",.45},{"Fetching icons...",.75},{"Building window...",.95},{"Ready",1}}
+	local each=math.max((w.Time or 3)/#steps,.12)
+	task.wait(.35)
+	for i,s in ipairs(steps) do
+		st.Text=s[1] tw(fl,.4,{Size=UDim2.new(s[2],0,1,0)})
+		if i==3 then
+			local t0=tick()
+			while not IconsReady and tick()-t0<6 do task.wait(.05) end
+		end
+		task.wait(each)
 	end
-	task.wait(.7)
-	step("Initializing interface...",.2)
-	step("Loading modules...",.45)
-	step("Fetching icon library...",.75,loadIcons)
-	step("Building window...",.95)
-	step("Ready",1)
+	if w.Sticky then
+		st.Text="Tap anywhere to continue"
+		local pulse=true
+		task.spawn(function()
+			while pulse and st.Parent do
+				tw(st,.7,{TextTransparency=.6}) task.wait(.7)
+				tw(st,.7,{TextTransparency=0}) task.wait(.7)
+			end
+		end)
+		local btn=new("TextButton",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text="",ZIndex=501,Parent=f})
+		btn.Activated:Wait()
+		pulse=false
+		click()
+	end
+	for _,c in ipairs(wconns) do c:Disconnect() end
 	tw(f,.5,{GroupTransparency=1})
 	task.delay(.55,function() f:Destroy() end)
 end
@@ -639,13 +960,20 @@ function Window:_makeTab(parent,name,icon,indent)
 	local btn=new("TextButton",{Size=UDim2.new(1,0,0,32),BackgroundColor3=acc,BackgroundTransparency=1,Text="",AutoButtonColor=false,ClipsDescendants=true,LayoutOrder=self.tabN,Parent=parent})
 	corner(btn,6)
 	local bar=new("Frame",{Position=UDim2.new(0,0,.5,-8),Size=UDim2.fromOffset(3,16),BackgroundColor3=acc,BackgroundTransparency=1,BorderSizePixel=0,Parent=btn}) corner(bar,2)
-	local ico=new("ImageLabel",{BackgroundTransparency=1,Size=UDim2.fromOffset(16,16),AnchorPoint=Vector2.new(.5,.5),Position=UDim2.new(0,indent+18,.5,0),ImageColor3=SUB,Parent=btn})
+	local ico=new("ImageLabel",{BackgroundTransparency=1,Size=UDim2.fromOffset(16,16),AnchorPoint=Vector2.new(.5,.5),Position=UDim2.new(0,indent+18,.5,0),ImageColor3=SUB,ImageTransparency=1,Parent=btn})
 	if not setIcon(ico,icon) then ico.Visible=false end
 	local lbl=txt(btn,name,12,GB,SUB) lbl.Position=UDim2.new(0,indent+(ico.Visible and 32 or 12),0,0) lbl.Size=UDim2.new(1,-indent-36,1,0)
+	lbl.TextTransparency=1
 	local tab={Name=name,Button=btn,Bar=bar,Icon=ico,Label=lbl}
-	tab.Page=makePage(newScroll(self.Pages),self.Pages,self)
+	tab.Page=makePage(newScroll(self.Pages),self.Pages,self,name)
 	interactive(btn,btn)
 	btn.Activated:Connect(function() tabAnim(tab,math.random(1,5)) self:Select(tab) end)
+	-- sidebar entrance animation (staggered)
+	task.delay(.25+self.tabN*.07,function()
+		tw(lbl,.5,{TextTransparency=0}) tw(ico,.5,{ImageTransparency=0})
+		local p=lbl.Position
+		lbl.Position=p+UDim2.fromOffset(-14,0) tw(lbl,.5,{Position=p},Enum.EasingStyle.Back)
+	end)
 	table.insert(self.Tabs,tab)
 	if #self.Tabs==1 then task.defer(function() self:Select(tab) end) end
 	return tab
@@ -656,6 +984,7 @@ function Window:Select(tab)
 		local on=(t==tab)
 		tw(t.Button,.2,{BackgroundTransparency=on and .8 or 1})
 		tw(t.Bar,.2,{BackgroundTransparency=on and 0 or 1})
+		tw(t.Bar,.3,{Size=on and UDim2.fromOffset(3,16) or UDim2.fromOffset(3,4)},Enum.EasingStyle.Back)
 		tw(t.Label,.2,{TextColor3=on and TXT or SUB})
 		tw(t.Icon,.2,{ImageColor3=on and TXT or SUB})
 		for _,p in ipairs(t.Subs or {t.Page}) do
@@ -667,6 +996,7 @@ function Window:Select(tab)
 	local p=tab.Subs and tab.ActiveSub or tab.Page
 	p.Scroll.Visible=true
 	p.Scroll.Position=UDim2.new(0,0,0,14) tw(p.Scroll,.3,{Position=UDim2.new()})
+	playIn(p)
 	self.TabTitle.Text=tab.Name
 	self.TabTitle.Position=UDim2.new(0,-12,0,0) self.TabTitle.TextTransparency=1
 	tw(self.TabTitle,.3,{Position=UDim2.new(),TextTransparency=0})
@@ -730,10 +1060,11 @@ function Window:InnerTab(o)
 			for _,p in ipairs(tab.Subs) do p.Scroll.Visible=false for _,e in ipairs(p.Extra) do e.Visible=false end end
 			tab.ActiveSub.Scroll.Visible=true
 			tab.ActiveSub.Scroll.Position=UDim2.new(0,0,0,14) tw(tab.ActiveSub.Scroll,.3,{Position=UDim2.new()})
+			playIn(tab.ActiveSub)
 		end
 	end
 	for i,n in ipairs(o.Tabs or {"Main"}) do
-		local pg=makePage(newScroll(self.Pages),self.Pages,self)
+		local pg=makePage(newScroll(self.Pages),self.Pages,self,(o.Name or "Tab").."/"..n)
 		tab.Subs[i]=pg res[n]=pg
 		local b=new("TextButton",{Size=UDim2.fromOffset(0,22),AutomaticSize=Enum.AutomaticSize.X,BackgroundColor3=Color3.fromRGB(26,26,31),Text=n,TextColor3=TXT,Font=GB,TextSize=11,AutoButtonColor=false,LayoutOrder=i,Parent=chips})
 		corner(b,6) new("UIPadding",{PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),Parent=b})
@@ -809,6 +1140,7 @@ function Window:Skin(o)
 		local fx=FX[name]
 		if on then
 			clearFX(ch,name)
+			if fx.off and stores[name] then pcall(fx.off,ch,stores[name]) end
 			stores[name]={}
 			local ok,e=pcall(fx.on,ch,stores[name],name)
 			if not ok then warn("[HE] effect "..name..": "..tostring(e)) end
@@ -821,13 +1153,14 @@ function Window:Skin(o)
 		local set={}
 		for _,nm in ipairs(list) do set[nm]=true end
 		for _,nm in ipairs(names) do
-			if set[nm] and not active[nm] then active[nm]=true applyFX(nm,true)
-			elseif not set[nm] and active[nm] then active[nm]=nil applyFX(nm,false) end
+			if set[nm] and not active[nm] then active[nm]=true task.spawn(applyFX,nm,true)
+			elseif not set[nm] and active[nm] then active[nm]=nil task.spawn(applyFX,nm,false) end
 		end
 	end})
+	-- re-apply every active effect after respawn (Korblox waits for the leg parts)
 	table.insert(self.Conns,LP.CharacterAdded:Connect(function()
 		task.wait(1.5)
-		for nm in pairs(active) do applyFX(nm,true) end
+		for nm in pairs(active) do task.spawn(applyFX,nm,true) end
 	end))
 
 	-- categories
@@ -867,7 +1200,7 @@ function Window:Skin(o)
 		if ok then
 			status.Text=(name and name~="") and ("Skin applied: "..name) or "Showing your skin."
 			status.TextColor3=TXT
-			for nm in pairs(active) do applyFX(nm,true) end
+			for nm in pairs(active) do task.spawn(applyFX,nm,true) end
 		else
 			status.Text="Could not load that player." status.TextColor3=Color3.fromRGB(240,90,90)
 			warn("[HE] skin: "..tostring(err))
@@ -918,6 +1251,7 @@ function Window:ToggleHalf()
 		tw(self.Title,.35,{Position=UDim2.new(0,self.TitleX,0,3),Size=UDim2.new(1,-190,0,22)})
 		tw(self.Sub,.3,{TextTransparency=0}) tw(self.HIcon,.3,{ImageTransparency=0})
 		tw(self.Root,.4,{Size=full},Enum.EasingStyle.Back)
+		if self.Current then playIn(self.Current.Subs and self.Current.ActiveSub or self.Current.Page) end
 	end
 end
 
@@ -947,6 +1281,14 @@ function Window:_confirm()
 	end)
 end
 
+--[[ CreateWindow options:
+Name, Subtitle, Color, Icon, Size, Draggable, BorderTransparency, ToggleKey, OpenButton={...}
+Welcome intro:
+  WelcomeName   = text shown after "Welcome," (default: your display name)
+  WelcomeTime   = seconds the intro lasts (default 3)
+  WelcomeSticky = true  -> intro stays until you tap the screen
+                  false -> intro closes by itself after WelcomeTime
+  Welcome       = false -> no intro at all ]]
 function HE.CreateWindow(a,b)
 	local o=(a==HE) and b or a
 	o=o or {}
@@ -954,18 +1296,33 @@ function HE.CreateWindow(a,b)
 	local gui=new("ScreenGui",{Name="HE_UI",ResetOnSpawn=false,IgnoreGuiInset=true,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,DisplayOrder=999})
 	pcall(function() gui.Parent=guiParent() end)
 	if not gui.Parent then gui.Parent=LP:WaitForChild("PlayerGui") end
-	loading(gui,accent)
+	if o.Welcome~=false then
+		loading(gui,accent,{
+			Name=o.WelcomeName or LP.DisplayName,
+			Time=tonumber(o.WelcomeTime) or 3,
+			Sticky=o.WelcomeSticky and true or false,
+		})
+	end
 
 	local size=o.Size or UDim2.new(0,600,0,357)
 	local self=setmetatable({Gui=gui,Accent=accent,Tabs={},tabN=0,Conns={},FullSize=size,Visible=true,Half=false},Window)
 
+	self.FileName="HE_"..tostring(o.Name or "Hub"):gsub("[^%w]","_")..".json"
+	self:_load()
+
 	local root=new("Frame",{Size=size,Position=UDim2.new(.5,-size.X.Offset/2,.5,-size.Y.Offset/2),BackgroundTransparency=1,Parent=gui})
-	local rs=new("UIScale",{Parent=root}) rs.Scale=.01 tw(rs,.45,{Scale=1},Enum.EasingStyle.Back)
+	local rs=new("UIScale",{Parent=root}) rs.Scale=.01 tw(rs,.55,{Scale=1},Enum.EasingStyle.Back)
 	self.Root,self.RootScale=root,rs
 	new("ImageLabel",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.new(1,70,1,70),BackgroundTransparency=1,Image="rbxassetid://6014261993",ImageColor3=Color3.new(0,0,0),ImageTransparency=.3,ScaleType=Enum.ScaleType.Slice,SliceCenter=Rect.new(49,49,450,450),Parent=root})
 	local main=new("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.fromRGB(9,9,10),BackgroundTransparency=0,BorderSizePixel=0,ClipsDescendants=true,Parent=root})
 	corner(main,10)
 	local ms=stroke(main,accent,1.5,o.BorderTransparency or o.CornerTransparency or .5)
+	-- rotating light border
+	local mg=new("UIGradient",{Color=ColorSequence.new({
+		ColorSequenceKeypoint.new(0,accent),
+		ColorSequenceKeypoint.new(.5,Color3.fromRGB(35,35,40)),
+		ColorSequenceKeypoint.new(1,accent)}),Parent=ms})
+	table.insert(self.Conns,RS.Heartbeat:Connect(function(dt) mg.Rotation=(mg.Rotation+dt*50)%360 end))
 	self.Main=main
 
 	-- header
@@ -978,6 +1335,7 @@ function HE.CreateWindow(a,b)
 	self.TitleX=hasIcon and 46 or 14
 	local title=txt(header,o.Name or "HE Hub",16,GB) title.Position=UDim2.new(0,self.TitleX,0,3) title.Size=UDim2.new(1,-190,0,22)
 	title.TextColor3=WHITE title.ZIndex=5 title.TextTransparency=0
+	movingGrad(title,self.Conns,.35) -- moving light-black gradient on the title
 	local sub=txt(header,o.Subtitle or "",11,G,SUB) sub.ZIndex=5 sub.Position=UDim2.new(0,self.TitleX,0,23) sub.Size=UDim2.new(1,-190,0,14)
 	self.Title,self.Sub=title,sub
 	makeDraggable(header,root,function() return o.Draggable~=false end,self.Conns)
@@ -986,14 +1344,22 @@ function HE.CreateWindow(a,b)
 	local function hbtn(x)
 		local b=new("TextButton",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,x,0,20),Size=UDim2.fromOffset(26,26),BackgroundColor3=Color3.fromRGB(22,22,26),Text="",AutoButtonColor=false,Parent=header})
 		corner(b,6) local s=stroke(b,LINE,1) interactive(b,b)
-		b.MouseEnter:Connect(function() tw(s,.2,{Color=accent}) end)
-		b.MouseLeave:Connect(function() tw(s,.2,{Color=LINE}) end)
-		return b
+		b.MouseEnter:Connect(function() tw(s,.2,{Color=accent}) tw(b,.2,{Size=UDim2.fromOffset(28,28)}) end)
+		b.MouseLeave:Connect(function() tw(s,.2,{Color=LINE}) tw(b,.2,{Size=UDim2.fromOffset(26,26)}) end)
+		return b,s
 	end
-	local function img(b,id) new("ImageLabel",{BackgroundTransparency=1,Position=UDim2.fromOffset(4,4),Size=UDim2.new(1,-8,1,-8),Image="rbxassetid://"..id,Parent=b}) end
-	local closeB=hbtn(-10) img(closeB,"3868133279")
-	local halfB=hbtn(-42) img(halfB,"96708233182403")
+	local closeB,closeS=hbtn(-10)
+	local halfB=hbtn(-42)
 	local hideB=hbtn(-74)
+	-- X (close)
+	for _,r in ipairs({45,-45}) do
+		new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(14,2),Rotation=r,BackgroundColor3=WHITE,BorderSizePixel=0,Parent=closeB})
+	end
+	closeB.MouseEnter:Connect(function() tw(closeS,.2,{Color=Color3.fromRGB(220,38,38)}) end)
+	-- square (half hide)
+	local sq=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(11,11),BackgroundTransparency=1,Parent=halfB})
+	corner(sq,2) stroke(sq,WHITE,1.5)
+	-- dash (hide)
 	new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(12,2),BackgroundColor3=WHITE,BorderSizePixel=0,Parent=hideB})
 	closeB.Activated:Connect(function() self:_confirm() end)
 	halfB.Activated:Connect(function() self:ToggleHalf() end)
@@ -1037,4 +1403,3 @@ end
 
 
 return HE
- 
