@@ -74,21 +74,29 @@ local function interactive(btn,host)
 	end)
 end
 
--- moving light-black band over white text (colors are recomputed, text always stays visible)
+-- moving light-black band over white text (per-letter colors, no UIGradient on text)
 local function movingGrad(lbl,conns,speed)
-	local g=new("UIGradient",{Parent=lbl})
-	local W,D=Color3.fromRGB(255,255,255),Color3.fromRGB(95,95,105)
-	local t0=tick()
-	local function upd()
-		local c=(((tick()-t0)*(speed or .35))%1.6)-.3
-		local a=math.clamp(c-.3,.001,.96)
-		local b=math.clamp(c,a+.002,.97)
-		local d=math.clamp(c+.3,b+.002,.99)
-		g.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,W),ColorSequenceKeypoint.new(a,W),ColorSequenceKeypoint.new(b,D),ColorSequenceKeypoint.new(d,W),ColorSequenceKeypoint.new(1,W)})
-	end
-	upd()
-	table.insert(conns,RS.Heartbeat:Connect(upd))
-	return g
+	local chars={}
+	for _,cp in utf8.codes(lbl.Text) do chars[#chars+1]=utf8.char(cp) end
+	local n=#chars
+	if n==0 then return end
+	lbl.RichText=true
+	local function esc(c) return c=="&" and "&amp;" or c=="<" and "&lt;" or c==">" and "&gt;" or c end
+	local t0,last=tick(),0
+	table.insert(conns,RS.Heartbeat:Connect(function()
+		local now=tick()
+		if now-last<.04 then return end
+		last=now
+		local c=(((now-t0)*(speed or .35))%1.8)-.4
+		local out={}
+		for i,ch in ipairs(chars) do
+			local p=n>1 and (i-1)/(n-1) or .5
+			local k=math.clamp(1-math.abs(p-c)/.45,0,1)
+			local v=math.floor(255-160*k+.5)
+			out[i]='<font color="rgb('..v..','..v..','..(v+4>255 and 255 or v+4)..')">'..esc(ch)..'</font>'
+		end
+		lbl.Text=table.concat(out)
+	end))
 end
 
 ----------------------------------------------------------------- icons
@@ -279,10 +287,9 @@ end
 local CardStroke=setmetatable({},{__mode="k"})
 function Page:_card(h)
 	self.n=self.n+1
-	local c=new("Frame",{Size=UDim2.new(1,0,0,h),BackgroundColor3=WHITE,LayoutOrder=self.n,Parent=self.Scroll})
+	local c=new("Frame",{Size=UDim2.new(1,0,0,h),BackgroundColor3=Color3.fromRGB(21,21,26),LayoutOrder=self.n,Parent=self.Scroll})
 	corner(c,12)
 	CardStroke[c]=stroke(c,LINE,1,.5)
-	new("UIGradient",{Color=ColorSequence.new(Color3.fromRGB(30,30,36),Color3.fromRGB(15,15,19)),Rotation=90,Parent=c})
 	new("UIScale",{Name="CS",Parent=c})
 	return c
 end
@@ -1310,6 +1317,11 @@ function HE.CreateWindow(a,b)
 	end
 
 	local size=o.Size or UDim2.new(0,600,0,357)
+	local cam=workspace.CurrentCamera
+	if cam then
+		local vp=cam.ViewportSize
+		size=UDim2.new(size.X.Scale,math.min(size.X.Offset,vp.X-40),size.Y.Scale,math.min(size.Y.Offset,vp.Y-90))
+	end
 	local self=setmetatable({Gui=gui,Accent=accent,Tabs={},tabN=0,Conns={},FullSize=size,Visible=true,Half=false},Window)
 
 	self.FileName="HE_"..tostring(o.Name or "Hub"):gsub("[^%w]","_")..".json"
@@ -1322,12 +1334,6 @@ function HE.CreateWindow(a,b)
 	local main=new("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.fromRGB(9,9,10),BackgroundTransparency=0,BorderSizePixel=0,ClipsDescendants=true,Parent=root})
 	corner(main,16)
 	local ms=stroke(main,accent,1,o.BorderTransparency or o.CornerTransparency or .72)
-	-- rotating light border
-	local mg=new("UIGradient",{Color=ColorSequence.new({
-		ColorSequenceKeypoint.new(0,accent),
-		ColorSequenceKeypoint.new(.5,Color3.fromRGB(35,35,40)),
-		ColorSequenceKeypoint.new(1,accent)}),Parent=ms})
-	table.insert(self.Conns,RS.Heartbeat:Connect(function(dt) mg.Rotation=(mg.Rotation+dt*50)%360 end))
 	self.Main=main
 
 	-- header
@@ -1408,3 +1414,4 @@ end
 
 
 return HE
+ 
