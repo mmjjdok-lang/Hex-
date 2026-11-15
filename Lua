@@ -59,9 +59,9 @@ local function ripple(host,x,y)
 	host.ClipsDescendants=true
 	local ap,as=host.AbsolutePosition,host.AbsoluteSize
 	local m=math.max(as.X,as.Y)*2
-	local c=new("Frame",{BackgroundColor3=WHITE,BackgroundTransparency=.75,AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(x-ap.X,y-ap.Y),Size=UDim2.fromOffset(0,0),ZIndex=host.ZIndex+20,Parent=host})
+	local c=new("Frame",{BackgroundColor3=WHITE,BackgroundTransparency=.88,AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromOffset(x-ap.X,y-ap.Y),Size=UDim2.fromOffset(0,0),ZIndex=host.ZIndex+20,Parent=host})
 	corner(c,999)
-	local s=stroke(c,WHITE,2,.4)
+	local s=stroke(c,WHITE,1,.6)
 	tw(c,.65,{Size=UDim2.fromOffset(m,m),BackgroundTransparency=1})
 	tw(s,.65,{Transparency=1})
 	task.delay(.7,function() c:Destroy() end)
@@ -74,16 +74,20 @@ local function interactive(btn,host)
 	end)
 end
 
--- moving light-black gradient on a text label
+-- moving light-black band over white text (colors are recomputed, text always stays visible)
 local function movingGrad(lbl,conns,speed)
-	local g=new("UIGradient",{Color=ColorSequence.new({
-		ColorSequenceKeypoint.new(0,Color3.fromRGB(255,255,255)),
-		ColorSequenceKeypoint.new(.5,Color3.fromRGB(80,80,90)),
-		ColorSequenceKeypoint.new(1,Color3.fromRGB(255,255,255))}),Parent=lbl})
+	local g=new("UIGradient",{Parent=lbl})
+	local W,D=Color3.fromRGB(255,255,255),Color3.fromRGB(95,95,105)
 	local t0=tick()
-	table.insert(conns,RS.Heartbeat:Connect(function()
-		g.Offset=Vector2.new(((tick()-t0)*(speed or .35)%2)-1,0)
-	end))
+	local function upd()
+		local c=(((tick()-t0)*(speed or .35))%1.6)-.3
+		local a=math.clamp(c-.3,.001,.96)
+		local b=math.clamp(c,a+.002,.97)
+		local d=math.clamp(c+.3,b+.002,.99)
+		g.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,W),ColorSequenceKeypoint.new(a,W),ColorSequenceKeypoint.new(b,D),ColorSequenceKeypoint.new(d,W),ColorSequenceKeypoint.new(1,W)})
+	end
+	upd()
+	table.insert(conns,RS.Heartbeat:Connect(upd))
 	return g
 end
 
@@ -276,8 +280,8 @@ local CardStroke=setmetatable({},{__mode="k"})
 function Page:_card(h)
 	self.n=self.n+1
 	local c=new("Frame",{Size=UDim2.new(1,0,0,h),BackgroundColor3=WHITE,LayoutOrder=self.n,Parent=self.Scroll})
-	corner(c,8)
-	CardStroke[c]=stroke(c,LINE,1,0)
+	corner(c,12)
+	CardStroke[c]=stroke(c,LINE,1,.5)
 	new("UIGradient",{Color=ColorSequence.new(Color3.fromRGB(30,30,36),Color3.fromRGB(15,15,19)),Rotation=90,Parent=c})
 	new("UIScale",{Name="CS",Parent=c})
 	return c
@@ -364,7 +368,7 @@ function Page:TextBox(o)
 	local c=self:_card(38)
 	local n=txt(c,o.Name or "Text",13,GB) n.Position=UDim2.new(0,12,0,0) n.Size=UDim2.new(.5,-12,1,0)
 	local box=new("TextBox",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-10,.5,0),Size=UDim2.new(.45,0,0,26),BackgroundColor3=Color3.fromRGB(10,10,12),Text=o.Default or "",PlaceholderText=o.Placeholder or "",PlaceholderColor3=SUB,TextColor3=TXT,Font=G,TextSize=12,ClearTextOnFocus=false,Parent=c})
-	corner(box,6) stroke(box,LINE,1)
+	corner(box,8) stroke(box,LINE,1)
 	box.FocusLost:Connect(function() safe(o.Callback,box.Text) end)
 	return box
 end
@@ -438,7 +442,7 @@ function Page:Dropdown(o)
 		local x=math.clamp(ap.X+c.AbsoluteSize.X-W,6,math.max(6,main.AbsoluteSize.X-W-6))
 		local above=ap.Y-H-4>=44
 		local f=new("Frame",{AnchorPoint=Vector2.new(0,above and 1 or 0),Position=UDim2.fromOffset(x,above and ap.Y-4 or ap.Y+c.AbsoluteSize.Y+4),Size=UDim2.fromOffset(W,0),BackgroundColor3=Color3.fromRGB(12,12,15),ClipsDescendants=true,ZIndex=41,Parent=main})
-		corner(f,8) stroke(f,win.Accent,1,.35)
+		corner(f,12) stroke(f,win.Accent,1,.6)
 		tw(f,.28,{Size=UDim2.fromOffset(W,H)},Enum.EasingStyle.Back)
 		tw(ar,.25,{Rotation=180})
 		local box
@@ -503,7 +507,7 @@ function Page:ButtonDropdown(o)
 	local bs=o.Buttons or {}
 	for i,d in ipairs(bs) do
 		local b=new("TextButton",{Position=UDim2.new(0,8,0,40+(i-1)*32),Size=UDim2.new(1,-16,0,28),BackgroundColor3=Color3.fromRGB(30,30,36),Text=d.Name or "Button",TextColor3=TXT,Font=G,TextSize=12,AutoButtonColor=false,Parent=c})
-		corner(b,6) interactive(b,b)
+		corner(b,8) interactive(b,b)
 		b.Activated:Connect(function() safe(d.Callback) end)
 	end
 	local total=44+#bs*32
@@ -554,7 +558,7 @@ function Page:LabelBox(o)
 	local c=self:_card(72)
 	local l=txt(c,o.Text or "Label",12,G,SUB) l.Position=UDim2.new(0,12,0,6) l.Size=UDim2.new(1,-24,0,26) l.TextWrapped=true
 	local b=new("TextButton",{Position=UDim2.new(0,12,0,36),Size=UDim2.new(1,-24,0,28),BackgroundColor3=self.Win.Accent,Text=o.ButtonName or "Run",TextColor3=onAcc(self.Win.Accent),Font=GB,TextSize=12,AutoButtonColor=false,Parent=c})
-	corner(b,6) interactive(b,b)
+	corner(b,8) interactive(b,b)
 	b.Activated:Connect(function() safe(o.Callback) end)
 end
 
@@ -568,7 +572,7 @@ function Page:Split(o)
 	new("UIGridLayout",{CellSize=UDim2.new(1/cols,-math.ceil(6*(cols-1)/cols),0,30),CellPadding=UDim2.fromOffset(6,6),SortOrder=Enum.SortOrder.LayoutOrder,Parent=g})
 	for i,d in ipairs(items) do
 		local b=new("TextButton",{BackgroundColor3=Color3.fromRGB(30,30,36),Text=d.Name or "Button",TextColor3=TXT,Font=G,TextSize=12,AutoButtonColor=false,LayoutOrder=i,Parent=g})
-		corner(b,6) interactive(b,b)
+		corner(b,8) interactive(b,b)
 		b.Activated:Connect(function() safe(d.Callback) end)
 	end
 end
@@ -588,7 +592,7 @@ function Page:ButtonSettings(o)
 		if not sp then
 			sp=new("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false,Parent=self.Holder})
 			local back=new("TextButton",{Size=UDim2.fromOffset(60,24),BackgroundColor3=Color3.fromRGB(26,26,31),Text="< Back",TextColor3=TXT,Font=GB,TextSize=12,AutoButtonColor=false,Parent=sp})
-			corner(back,6) interactive(back,back)
+			corner(back,8) interactive(back,back)
 			local t=txt(sp,(o.Name or "Button").." Settings",13,GB) t.Position=UDim2.fromOffset(70,0) t.Size=UDim2.new(1,-70,0,24)
 			local holder=new("Frame",{Position=UDim2.fromOffset(0,32),Size=UDim2.new(1,0,1,-32),BackgroundTransparency=1,Parent=sp})
 			local sc=newScroll(holder) sc.Visible=true
@@ -759,6 +763,7 @@ local function buildFB(win,cfg,run,ctl,parent,preview)
 		if not b.Parent then return end
 		local on=ctl and ctl.Get() or false
 		b.BackgroundColor3=on and win.Accent or Color3.fromRGB(14,14,16)
+		b.BackgroundTransparency=preview and 0 or (on and .35 or .55)
 		lbl.TextColor3=on and onAcc(win.Accent) or WHITE
 	end
 	function obj.Update()
@@ -815,7 +820,7 @@ function Page:_attachFloating(c,o,kind,ctl,run)
 	if cfg.Enabled then task.defer(showLive) end
 
 	local arrow=new("TextButton",{AnchorPoint=Vector2.new(0,.5),Position=UDim2.new(0,6,.5,0),Size=UDim2.fromOffset(22,22),BackgroundColor3=Color3.fromRGB(34,34,40),Text=">",TextColor3=TXT,Font=GB,TextSize=13,AutoButtonColor=false,ZIndex=6,Parent=c})
-	corner(arrow,6) interactive(arrow,c)
+	corner(arrow,8) interactive(arrow,c)
 	arrow.MouseEnter:Connect(function() tw(arrow,.15,{BackgroundColor3=Color3.fromRGB(52,52,60)}) end)
 	arrow.MouseLeave:Connect(function() tw(arrow,.15,{BackgroundColor3=Color3.fromRGB(34,34,40)}) end)
 
@@ -826,7 +831,7 @@ function Page:_attachFloating(c,o,kind,ctl,run)
 		ed=new("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false,Parent=self.Holder})
 		table.insert(self.Extra,ed)
 		local back=new("TextButton",{Size=UDim2.fromOffset(60,24),BackgroundColor3=Color3.fromRGB(26,26,31),Text="< Back",TextColor3=TXT,Font=GB,TextSize=12,AutoButtonColor=false,Parent=ed})
-		corner(back,6) interactive(back,back) back.Activated:Connect(close)
+		corner(back,8) interactive(back,back) back.Activated:Connect(close)
 		local t=txt(ed,tostring(o.Name or kind).." - Floating "..kind,13,GB) t.Position=UDim2.fromOffset(70,0) t.Size=UDim2.new(1,-70,0,24)
 		local sq=new("Frame",{Position=UDim2.fromOffset(0,32),Size=UDim2.fromOffset(150,150),BackgroundColor3=Color3.fromRGB(6,6,8),Parent=ed})
 		corner(sq,8) stroke(sq,LINE,1)
@@ -958,7 +963,7 @@ function Window:_makeTab(parent,name,icon,indent)
 	self.tabN=self.tabN+1
 	local acc=self.Accent
 	local btn=new("TextButton",{Size=UDim2.new(1,0,0,32),BackgroundColor3=acc,BackgroundTransparency=1,Text="",AutoButtonColor=false,ClipsDescendants=true,LayoutOrder=self.tabN,Parent=parent})
-	corner(btn,6)
+	corner(btn,10)
 	local bar=new("Frame",{Position=UDim2.new(0,0,.5,-8),Size=UDim2.fromOffset(3,16),BackgroundColor3=acc,BackgroundTransparency=1,BorderSizePixel=0,Parent=btn}) corner(bar,2)
 	local ico=new("ImageLabel",{BackgroundTransparency=1,Size=UDim2.fromOffset(16,16),AnchorPoint=Vector2.new(.5,.5),Position=UDim2.new(0,indent+18,.5,0),ImageColor3=SUB,ImageTransparency=1,Parent=btn})
 	if not setIcon(ico,icon) then ico.Visible=false end
@@ -1124,7 +1129,7 @@ function Window:Skin(o)
 	end
 	local t=txt(card,"Player Name",12,GB) t.Position=UDim2.fromOffset(214,12) t.Size=UDim2.new(1,-226,0,18)
 	local box=new("TextBox",{Position=UDim2.fromOffset(214,34),Size=UDim2.new(1,-226,0,30),BackgroundColor3=Color3.fromRGB(10,10,12),Text="",PlaceholderText="Enter username",PlaceholderColor3=SUB,TextColor3=TXT,Font=G,TextSize=12,ClearTextOnFocus=false,Parent=card})
-	corner(box,6) stroke(box,LINE,1)
+	corner(box,8) stroke(box,LINE,1)
 	local ap=new("TextButton",{Position=UDim2.fromOffset(214,72),Size=UDim2.new(1,-226,0,32),BackgroundColor3=accent,Text="Apply Skin",TextColor3=onAcc(accent),Font=GB,TextSize=12,AutoButtonColor=false,Parent=card})
 	corner(ap,6) interactive(ap,ap)
 	local status=txt(card,"Drag the preview to rotate 360 degrees.",11,G,SUB) status.Position=UDim2.fromOffset(214,112) status.Size=UDim2.new(1,-226,0,60) status.TextWrapped=true status.TextYAlignment=Enum.TextYAlignment.Top
@@ -1260,7 +1265,7 @@ function Window:_confirm()
 	local ov=new("TextButton",{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,Text="",ZIndex=100,Parent=main})
 	tw(ov,.25,{BackgroundTransparency=.4})
 	local d=new("Frame",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(290,128),BackgroundColor3=Color3.new(0,0,0),Parent=ov})
-	corner(d,10) stroke(d,self.Accent,1.5,.2)
+	corner(d,16) stroke(d,self.Accent,1,.6)
 	local sc=new("UIScale",{Scale=.7,Parent=d}) tw(sc,.3,{Scale=1},Enum.EasingStyle.Back)
 	local t=txt(d,"Are you sure you want to delete the script?",14,GB,TXT,CENTER) t.Position=UDim2.fromOffset(14,14) t.Size=UDim2.new(1,-28,0,48) t.TextWrapped=true
 	local function mk(text,x,fill)
@@ -1313,10 +1318,10 @@ function HE.CreateWindow(a,b)
 	local root=new("Frame",{Size=size,Position=UDim2.new(.5,-size.X.Offset/2,.5,-size.Y.Offset/2),BackgroundTransparency=1,Parent=gui})
 	local rs=new("UIScale",{Parent=root}) rs.Scale=.01 tw(rs,.55,{Scale=1},Enum.EasingStyle.Back)
 	self.Root,self.RootScale=root,rs
-	new("ImageLabel",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.new(1,70,1,70),BackgroundTransparency=1,Image="rbxassetid://6014261993",ImageColor3=Color3.new(0,0,0),ImageTransparency=.3,ScaleType=Enum.ScaleType.Slice,SliceCenter=Rect.new(49,49,450,450),Parent=root})
+	new("ImageLabel",{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.new(1,70,1,70),BackgroundTransparency=1,Image="rbxassetid://6014261993",ImageColor3=Color3.new(0,0,0),ImageTransparency=.5,ScaleType=Enum.ScaleType.Slice,SliceCenter=Rect.new(49,49,450,450),Parent=root})
 	local main=new("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.fromRGB(9,9,10),BackgroundTransparency=0,BorderSizePixel=0,ClipsDescendants=true,Parent=root})
-	corner(main,10)
-	local ms=stroke(main,accent,1.5,o.BorderTransparency or o.CornerTransparency or .5)
+	corner(main,16)
+	local ms=stroke(main,accent,1,o.BorderTransparency or o.CornerTransparency or .72)
 	-- rotating light border
 	local mg=new("UIGradient",{Color=ColorSequence.new({
 		ColorSequenceKeypoint.new(0,accent),
@@ -1327,7 +1332,7 @@ function HE.CreateWindow(a,b)
 
 	-- header
 	local header=new("Frame",{Size=UDim2.new(1,0,0,42),BackgroundTransparency=1,Active=true,Parent=main})
-	new("Frame",{Position=UDim2.new(0,10,0,41),Size=UDim2.new(1,-20,0,1),BackgroundColor3=WHITE,BorderSizePixel=0,Parent=header})
+	new("Frame",{Position=UDim2.new(0,10,0,41),Size=UDim2.new(1,-20,0,1),BackgroundColor3=LINE,BackgroundTransparency=.4,BorderSizePixel=0,Parent=header})
 	local hi=new("ImageLabel",{BackgroundTransparency=1,Position=UDim2.fromOffset(12,7),Size=UDim2.fromOffset(26,26),Parent=header})
 	local hasIcon=setIcon(hi,o.Icon)
 	hi.Visible=hasIcon
@@ -1343,7 +1348,7 @@ function HE.CreateWindow(a,b)
 
 	local function hbtn(x)
 		local b=new("TextButton",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,x,0,20),Size=UDim2.fromOffset(26,26),BackgroundColor3=Color3.fromRGB(22,22,26),Text="",AutoButtonColor=false,Parent=header})
-		corner(b,6) local s=stroke(b,LINE,1) interactive(b,b)
+		corner(b,9) local s=stroke(b,LINE,1,.4) interactive(b,b)
 		b.MouseEnter:Connect(function() tw(s,.2,{Color=accent}) tw(b,.2,{Size=UDim2.fromOffset(28,28)}) end)
 		b.MouseLeave:Connect(function() tw(s,.2,{Color=LINE}) tw(b,.2,{Size=UDim2.fromOffset(26,26)}) end)
 		return b,s
@@ -1382,7 +1387,7 @@ function HE.CreateWindow(a,b)
 	if ob.Enabled~=false then
 		local sz=ob.Size or UDim2.fromOffset(48,48)
 		local ofb=new("TextButton",{Size=sz,Position=ob.Position or UDim2.new(0,20,.5,-24),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=ob.Transparency or 0,Text="HE",TextColor3=WHITE,Font=GB,TextSize=18,AutoButtonColor=false,Visible=false,Parent=gui})
-		corner(ofb,12) stroke(ofb,accent,1.5,.2)
+		corner(ofb,16) stroke(ofb,accent,1,.55)
 		local oi=new("ImageLabel",{BackgroundTransparency=1,Size=UDim2.new(1,-10,1,-10),Position=UDim2.fromOffset(5,5),Parent=ofb})
 		if setIcon(oi,ob.Image or ob.Icon) then ofb.Text="" else oi:Destroy() end
 		interactive(ofb,ofb)
